@@ -825,6 +825,8 @@ function toast(msg){
 }
 function getClient(id){ return state.clients.find(c=>c.id===id) || {}; }
 function newId(){ return Math.random().toString(36).slice(2,9); }
+function canReview(){ return session.role === 'admin' || session.role === 'super_admin' || session.role === 'supervisor'; }
+function isSuperAdmin(){ return session.role === 'super_admin'; }
 
 /* ============================================================
    LOGIN
@@ -916,7 +918,7 @@ $$('#bottomnav button').forEach(b => b.addEventListener('click', () => {
 function navigate(view){
   currentView = view;
   $$('#bottomnav button').forEach(b => b.classList.toggle('active', b.dataset.nav===view));
-  if(session.role==='admin' && view==='home') view='admin';
+  if(canReview() && view==='home') view='admin';
   const main = $('#main');
   if(view==='home') main.innerHTML = renderHome();
   else if(view==='services') main.innerHTML = renderServices();
@@ -1058,23 +1060,34 @@ function renderProfile(){
     ` : ''}
 
     <h3 class="section-title">Datos</h3>
-    <div class="card" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;font-size:13px">
-      <strong>📦 ¿Dónde se guardan los registros?</strong><br>
-      Toda la información (clientes, reportes, firmas, fotos) se guarda en el <strong>almacenamiento local del navegador</strong> (<code>localStorage</code>). Es privado para este dispositivo. Tamaño actual: <strong>${kb} KB</strong>.<br>
-      <span class="text-muted text-sm">Para usar en varios dispositivos o no perder los datos al limpiar el navegador, exporta una copia periódicamente.</span>
-    </div>
-    <div class="grid-2">
+    ${cloud.online ? `
+      <div class="card" style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;font-size:13px">
+        <strong>☁️ Datos sincronizados en la nube</strong><br>
+        Todos los reportes, clientes y firmas se guardan en <strong>Supabase</strong> y se sincronizan automáticamente entre todos los dispositivos del equipo. Nada depende de este navegador.
+        <div class="text-sm" style="margin-top:6px;color:#047857">
+          <strong>${state.reports.length}</strong> reportes · <strong>${state.clients.length}</strong> clientes · <strong>${state.users.length}</strong> usuarios · caché local: ${kb} KB
+        </div>
+      </div>
+    ` : `
+      <div class="card" style="background:#fef3c7;border:1px solid #fde68a;color:#92400e;font-size:13px">
+        <strong>⚠️ Sin sincronización en la nube</strong><br>
+        La app no está conectada a Supabase. Los datos se guardan solo en este dispositivo (${kb} KB en el navegador). Configura <code>config.js</code> para habilitar la sincronización.
+      </div>
+    `}
+    <div class="grid-2 mt-8">
       <button class="btn btn-outline" id="btn-export">
         <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Exportar JSON
+        Exportar backup
       </button>
-      <label class="btn btn-outline" style="cursor:pointer">
-        <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        Importar JSON
-        <input type="file" id="btn-import" accept="application/json" hidden>
-      </label>
+      ${session.role === 'super_admin' ? `
+        <label class="btn btn-outline" style="cursor:pointer">
+          <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Importar backup
+          <input type="file" id="btn-import" accept="application/json" hidden>
+        </label>
+      ` : ''}
     </div>
-    <button class="btn btn-danger btn-block mt-12" id="btn-reset">Borrar todos los datos</button>
+    ${session.role === 'super_admin' && !cloud.online ? `<button class="btn btn-danger btn-block mt-12" id="btn-reset">Borrar todos los datos locales</button>` : ''}
   `;
 }
 
@@ -1433,7 +1446,7 @@ function attachHandlers(){
     const r = state.reports.find(x=>x.id===el.dataset.open);
     if(!r) return;
     editingReport = r;
-    if(session.role==='admin') openAdminReview(r);
+    if(canReview()) openAdminReview(r);
     else navigate('detail');
   }));
   $$('[data-nav-go]').forEach(el => el.addEventListener('click',()=>navigate(el.dataset.navGo)));
@@ -1573,6 +1586,19 @@ function attachHandlers(){
     const r = state.reports.find(x=>x.id===b.dataset.pdfOpen);
     editingReport = r; navigate('pdf');
   }));
+  // Borrar reporte (solo super admin)
+  $$('[data-del-report]').forEach(b => b.addEventListener('click', async (e)=>{
+    e.stopPropagation();
+    const id = b.dataset.delReport;
+    const r = state.reports.find(x=>x.id===id);
+    if(!r) return;
+    if(!confirm(`¿Borrar el reporte ${r.number}?\n\nCliente: ${getClient(r.clientId).name||'—'}\nEsto es irreversible.`)) return;
+    state.reports = state.reports.filter(x=>x.id!==id);
+    await cloud.deleteReport(id);
+    saveState();
+    navigate(currentView);
+    toast('Reporte borrado');
+  }));
 
   // PDF actions
   $('#pdf-print')?.addEventListener('click', ()=>{
@@ -1618,10 +1644,10 @@ function attachHandlers(){
     saveState();
     toast('✉️ Se abrió tu app de correo. Adjunta el PDF antes de enviar.');
   });
-  $('#pdf-back')?.addEventListener('click', ()=>navigate(session.role==='admin'?'admin':'detail'));
+  $('#pdf-back')?.addEventListener('click', ()=>navigate(canReview()?'admin':'detail'));
 
   // Preliminar
-  $('#pre-back')?.addEventListener('click', ()=>navigate(session.role==='admin'?'admin':'detail'));
+  $('#pre-back')?.addEventListener('click', ()=>navigate(canReview()?'admin':'detail'));
   $('#pre-print')?.addEventListener('click', ()=>{
     const original = document.title;
     document.title = `Preliminar ${editingReport.number} - ${getClient(editingReport.clientId).name||''}`;
@@ -2248,7 +2274,10 @@ function renderAdmin(){
   const billed = state.reports.filter(r=>r.status==='FACTURADO');
   return `
     <div class="welcome">
-      <div><h2>Panel de contabilidad</h2><p>Revisar y aprobar reportes</p></div>
+      <div>
+        <h2>${isSuperAdmin()?'Panel general':'Panel de contabilidad'}</h2>
+        <p>${isSuperAdmin()?'Todos los reportes · revisar, aprobar y administrar':'Revisar y aprobar reportes'}</p>
+      </div>
     </div>
     <div class="stats">
       <div class="stat"><div class="n">${pending.length}</div><div class="l">Por revisar</div></div>
@@ -2262,6 +2291,13 @@ function renderAdmin(){
     ${approved.length===0 ? '<div class="card text-muted">Sin aprobados.</div>' : approved.map(r=>adminCard(r)).join('')}
     <h3 class="section-title">Facturados</h3>
     ${billed.length===0 ? '<div class="card text-muted">Sin facturados.</div>' : billed.map(r=>adminCard(r)).join('')}
+    ${isSuperAdmin() ? `
+      <h3 class="section-title">Otros reportes</h3>
+      ${(() => {
+        const others = state.reports.filter(r => !['FIRMADO_POR_CLIENTE','EN_REVISION_ADMIN','APROBADO_PARA_FACTURAR','FACTURADO'].includes(r.status));
+        return others.length===0 ? '<div class="card text-muted">Sin otros reportes.</div>' : others.map(r=>adminCard(r)).join('');
+      })()}
+    ` : ''}
   `;
 }
 
@@ -2281,6 +2317,7 @@ function adminCard(r){
       <div class="flex gap-8 mt-12">
         <button class="btn btn-outline" data-pdf-open="${r.id}" style="flex:1"><svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Ver PDF</button>
         <button class="btn btn-primary" data-admin-open="${r.id}" style="flex:1">Revisar</button>
+        ${isSuperAdmin() ? `<button class="btn btn-danger" data-del-report="${r.id}" title="Borrar reporte" style="padding:8px 12px"><svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`:''}
       </div>
     </div>
   `;
@@ -2642,7 +2679,7 @@ function renderPDF(){
         </div>
       </div>
 
-      ${r.admin && session.role==='admin' ? `
+      ${r.admin && canReview() ? `
         <h2>11. VALIDACIÓN ADMINISTRATIVA</h2>
         <div class="sec-body two">
           <div>
