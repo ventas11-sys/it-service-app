@@ -129,21 +129,35 @@ alter table public.clients  enable row level security;
 alter table public.reports  enable row level security;
 
 -- ------- profiles -------
+-- Se usan políticas separadas para SELECT/UPDATE (own vs admin) porque
+-- múltiples políticas se combinan con OR y así evitamos cualquier
+-- posible recursión al evaluar helpers dentro de una sola política.
 drop policy if exists profiles_self_read on public.profiles;
-create policy profiles_self_read on public.profiles
-  for select using (auth.uid() = id or public.is_admin());
+drop policy if exists profiles_read_own on public.profiles;
+create policy profiles_read_own on public.profiles
+  for select using (auth.uid() = id);
+
+drop policy if exists profiles_read_all_admin on public.profiles;
+create policy profiles_read_all_admin on public.profiles
+  for select using (public.is_admin());
 
 drop policy if exists profiles_self_update on public.profiles;
-create policy profiles_self_update on public.profiles
-  for update using (auth.uid() = id or public.is_super_admin())
-  with check (auth.uid() = id or public.is_super_admin());
+drop policy if exists profiles_update_own on public.profiles;
+create policy profiles_update_own on public.profiles
+  for update using (auth.uid() = id) with check (auth.uid() = id);
+
+drop policy if exists profiles_update_all_super on public.profiles;
+create policy profiles_update_all_super on public.profiles
+  for update using (public.is_super_admin()) with check (public.is_super_admin());
 
 drop policy if exists profiles_admin_insert on public.profiles;
-create policy profiles_admin_insert on public.profiles
-  for insert with check (public.is_super_admin() or auth.uid() = id);
+drop policy if exists profiles_insert on public.profiles;
+create policy profiles_insert on public.profiles
+  for insert with check (auth.uid() = id or public.is_super_admin());
 
 drop policy if exists profiles_admin_delete on public.profiles;
-create policy profiles_admin_delete on public.profiles
+drop policy if exists profiles_delete_super on public.profiles;
+create policy profiles_delete_super on public.profiles
   for delete using (public.is_super_admin());
 
 -- ------- clients (todos los usuarios autenticados pueden ver/crear) -------
