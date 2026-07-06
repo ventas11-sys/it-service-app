@@ -345,24 +345,13 @@ img{max-width:100%;display:block}
     <p>Inicia sesión para continuar</p>
     <div class="field">
       <label>Correo</label>
-      <input type="email" class="input" id="login-email" value="jose.perez@tuempresa.com" autocomplete="username">
+      <input type="email" class="input" id="login-email" placeholder="correo@empresa.com" autocomplete="username">
     </div>
     <div class="field">
       <label>Contraseña</label>
-      <input type="password" class="input" id="login-pass" value="demo" autocomplete="current-password">
+      <input type="password" class="input" id="login-pass" autocomplete="current-password">
     </div>
     <button class="btn btn-primary btn-block" id="login-btn">Iniciar sesión</button>
-    <details style="margin-top:14px;font-size:12px;color:var(--muted)">
-      <summary style="cursor:pointer;text-align:center">Credenciales de demo</summary>
-      <div style="margin-top:8px;background:#f8fafc;padding:10px;border-radius:8px;line-height:1.6">
-        <strong>Técnico:</strong> jose.perez@tuempresa.com / demo<br>
-        <strong>Admin:</strong> ana@tuempresa.com / demo<br>
-        <strong>Super Admin:</strong> admin@tuempresa.com / admin
-      </div>
-    </details>
-    <button class="btn btn-ghost btn-block" id="login-customize" style="font-size:13px">
-      ⚙️ Personalizar empresa (logo, colores, nombre)
-    </button>
   </div>
 </div>
 
@@ -847,7 +836,6 @@ $('#btn-logout').addEventListener('click', async () => {
   $('#view-login').classList.remove('hidden');
   $('#app').classList.add('hidden');
 });
-$('#login-customize').addEventListener('click', openSettings);
 
 // Auto-login si Supabase ya tiene sesión activa
 (async function tryResumeSession(){
@@ -976,7 +964,7 @@ function renderAlerts(){
     </div>
     <div class="card">
       <div class="flex"><span class="badge badge-done">Aprobado</span><strong style="margin-left:8px">Reporte ${state.reports[2]?.number||'-'}</strong></div>
-      <p class="text-sm text-muted mb-0 mt-8">Administración aprobó el monto para facturación.</p>
+      <p class="text-sm text-muted mb-0 mt-8">Contabilidad aprobó el monto para facturación.</p>
     </div>
   `;
 }
@@ -989,7 +977,7 @@ function renderProfile(){
       <div style="text-align:center">
         <div style="width:80px;height:80px;border-radius:50%;background:var(--brand-soft);color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:700;margin:0 auto 10px">${esc((session.user||'JP')[0].toUpperCase())}</div>
         <h3 style="margin:0">${esc(session.user||'José Pérez')}</h3>
-        <p class="text-sm text-muted">${session.role==='admin'?'Administración':'Técnico de IT'}</p>
+        <p class="text-sm text-muted">${session.role==='super_admin'?'Super Admin':session.role==='admin'?'Contabilidad':session.role==='supervisor'?'Supervisor':'Técnico de IT'}</p>
       </div>
     </div>
     <div class="card">
@@ -1534,7 +1522,7 @@ function attachHandlers(){
     const i = state.reports.findIndex(r=>r.id===editingReport.id);
     if(i>=0) state.reports[i] = editingReport;
     saveState();
-    toast('Reporte enviado al cliente y a administración');
+    toast('Reporte enviado al cliente y a contabilidad');
   });
   $('#pdf-back')?.addEventListener('click', ()=>navigate(session.role==='admin'?'admin':'detail'));
 
@@ -1747,7 +1735,7 @@ function openClientModal(existing){
 
 const ROLE_LABEL = {
   super_admin: 'Super Admin',
-  admin: 'Administración',
+  admin: 'Contabilidad',
   supervisor: 'Supervisor',
   technician: 'Técnico'
 };
@@ -1765,7 +1753,7 @@ function openUserModal(existing){
       <select class="select" id="us-role">
         <option value="technician" ${u.role==='technician'?'selected':''}>Técnico — crea reportes y firmas</option>
         <option value="supervisor" ${u.role==='supervisor'?'selected':''}>Supervisor — corrige reportes</option>
-        <option value="admin" ${u.role==='admin'?'selected':''}>Administración — aprueba facturación</option>
+        <option value="admin" ${u.role==='admin'?'selected':''}>Contabilidad — aprueba facturación</option>
         <option value="super_admin" ${u.role==='super_admin'?'selected':''}>Super Admin — gestiona usuarios y tarifas</option>
       </select>
     </div>
@@ -1895,7 +1883,7 @@ function renderUsers(){
       <strong>Roles y permisos</strong><br>
       • <strong>Técnico</strong>: crea reportes, sube fotos, toma firmas. No ve precios.<br>
       • <strong>Supervisor</strong>: revisa y corrige reportes técnicos antes del envío.<br>
-      • <strong>Administración</strong>: valida horas, materiales, viáticos y aprueba facturación.<br>
+      • <strong>Contabilidad</strong>: valida horas, materiales, viáticos y aprueba facturación.<br>
       • <strong>Super Admin</strong>: gestiona usuarios, clientes, tarifas y permisos.
     </div>
   `;
@@ -2062,7 +2050,7 @@ function renderAdmin(){
   const billed = state.reports.filter(r=>r.status==='FACTURADO');
   return `
     <div class="welcome">
-      <div><h2>Panel de administración</h2><p>Revisar y aprobar reportes</p></div>
+      <div><h2>Panel de contabilidad</h2><p>Revisar y aprobar reportes</p></div>
     </div>
     <div class="stats">
       <div class="stat"><div class="n">${pending.length}</div><div class="l">Por revisar</div></div>
@@ -2116,7 +2104,7 @@ function openAdminReview(r){
   const total = subtotal + tax - (a.discount||0);
 
   const html = `
-    <div class="modal-head"><h3>Revisión administrativa · ${esc(r.number)}</h3><button class="x" data-close><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="modal-head"><h3>Revisión de Contabilidad · ${esc(r.number)}</h3><button class="x" data-close><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
     <div class="kv"><span class="k">Cliente</span><span class="v">${esc(c.name)}</span></div>
     <div class="kv"><span class="k">Técnico</span><span class="v">${esc(r.technician)}</span></div>
     <div class="kv"><span class="k">Trabajo</span><span class="v">${fmtMin(t.work_minutes)}</span></div>
