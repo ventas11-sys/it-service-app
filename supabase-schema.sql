@@ -48,6 +48,16 @@ create index if not exists reports_technician_idx on public.reports(technician_i
 create index if not exists reports_status_idx on public.reports(status);
 create index if not exists reports_date_idx on public.reports(date desc);
 
+-- ================ TABLA: app_settings ======================
+-- Configuración global compartida entre todos los dispositivos
+-- (logo, nombre de la empresa, colores de marca, etc.)
+create table if not exists public.app_settings (
+  key text primary key,
+  value jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references auth.users(id) on delete set null
+);
+
 -- ================ TRIGGER: updated_at ======================
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql as $$
@@ -204,6 +214,21 @@ create policy reports_update on public.reports
 drop policy if exists reports_delete on public.reports;
 create policy reports_delete on public.reports
   for delete using (public.is_admin());
+
+-- ------- app_settings -------
+alter table public.app_settings enable row level security;
+
+drop policy if exists app_settings_read on public.app_settings;
+create policy app_settings_read on public.app_settings
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists app_settings_write on public.app_settings;
+create policy app_settings_write on public.app_settings
+  for insert with check (public.is_super_admin());
+
+drop policy if exists app_settings_update on public.app_settings;
+create policy app_settings_update on public.app_settings
+  for update using (public.is_super_admin()) with check (public.is_super_admin());
 
 -- ============================================================
 -- OPCIONAL: crea al primer super admin (edita el email/pass)

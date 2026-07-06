@@ -366,6 +366,25 @@ img{max-width:100%;display:block}
       <input type="password" class="input" id="login-pass" autocomplete="current-password">
     </div>
     <button class="btn btn-primary btn-block" id="login-btn">Iniciar sesión</button>
+    <button class="btn btn-ghost btn-block" id="login-forgot" style="font-size:13px;margin-top:10px">¿Olvidaste tu contraseña?</button>
+  </div>
+</div>
+
+<!-- ===================== NUEVA CONTRASEÑA (después de reset) ===================== -->
+<div id="view-recover" class="login hidden">
+  <div class="login-card">
+    <div class="login-logo" id="recover-logo">IT</div>
+    <h1>Elige tu nueva contraseña</h1>
+    <p>Tu enlace de recuperación es válido. Escribe una clave nueva de mínimo 6 caracteres.</p>
+    <div class="field">
+      <label>Nueva contraseña</label>
+      <input type="password" class="input" id="rec-pass1" autocomplete="new-password">
+    </div>
+    <div class="field">
+      <label>Repite la contraseña</label>
+      <input type="password" class="input" id="rec-pass2" autocomplete="new-password">
+    </div>
+    <button class="btn btn-primary btn-block" id="rec-save">Guardar contraseña</button>
   </div>
 </div>
 
@@ -504,7 +523,18 @@ let wizardStep = 1;
 function loadJSON(k, fallback){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
 function saveJSON(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
 function saveState(){ saveJSON(STORAGE_KEY, state); cloud.pushAll(); }
-function saveBrand(){ saveJSON(BRAND_KEY, brand); applyBrand(); }
+function saveBrand(){
+  saveJSON(BRAND_KEY, brand);
+  applyBrand();
+  // sincroniza a la nube (solo super admin puede escribir; para otros roles falla en silencio)
+  if(cloud.online && isSuperAdmin()){
+    cloud.pushBrand().then(res => {
+      if(!res.ok && res.error && !res.error.includes('sin-cloud')){
+        console.warn('[cloud] pushBrand:', res.error);
+      }
+    });
+  }
+}
 
 /* ============================================================
    CLOUD SYNC (Supabase)
@@ -548,10 +578,11 @@ const cloud = {
   },
   async pullAll(){
     if(!this.online) return;
-    const [cRes, rRes, pRes] = await Promise.all([
+    const [cRes, rRes, pRes, sRes] = await Promise.all([
       this.client.from('clients').select('*').order('name', {ascending:true}),
       this.client.from('reports').select('*').order('created_at', {ascending:false}),
       this.client.from('profiles').select('*').order('name', {ascending:true}),
+      this.client.from('app_settings').select('*').eq('key','brand').maybeSingle(),
     ]);
     if(!cRes.error) state.clients = (cRes.data||[]).map(row => ({ id: row.id, ...(row.data||{}) }));
     if(!rRes.error) state.reports = (rRes.data||[]).map(row => ({ id: row.id, ...(row.data||{}) }));
@@ -559,11 +590,25 @@ const cloud = {
       id: row.id, name: row.name, email: row.email, phone: row.phone,
       role: row.role, active: row.active !== false
     }));
+    // brand desde la nube (si existe)
+    if(!sRes.error && sRes.data?.value){
+      brand = { ...defaultBrand, ...sRes.data.value };
+      saveJSON(BRAND_KEY, brand);
+      applyBrand();
+    }
     // snapshot to avoid re-pushing same data
     this.lastSnapshot.clients = JSON.stringify(state.clients);
     this.lastSnapshot.reports = JSON.stringify(state.reports);
     this.lastSnapshot.users = JSON.stringify(state.users);
     saveJSON(STORAGE_KEY, state);
+  },
+  async pushBrand(){
+    if(!this.online) return { ok:false, error:'sin-cloud' };
+    const { error } = await this.client.from('app_settings').upsert({
+      key: 'brand', value: brand, updated_by: session.userObj?.id || null, updated_at: new Date().toISOString()
+    }, { onConflict: 'key' });
+    if(error) return { ok:false, error: error.message };
+    return { ok:true };
   },
   pushAll(){
     if(!this.online || !session.userObj) return;
@@ -660,6 +705,75 @@ const cloud = {
   }
 };
 cloud.init();
+
+/* ============================================================
+   RECOVERY / RESET PASSWORD FLOW
+   ============================================================
+   Cuando el usuario abre el link del correo de reset, Supabase
+   emite el evento PASSWORD_RECOVERY. Debemos mostrar la pantalla
+   para elegir nueva contraseña y llamar updateUser({password}).
+   ============================================================ */
+let recoveryMode = false;
+function showRecoveryView(){
+  recoveryMode = true;
+  $('#view-login').classList.add('hidden');
+  $('#app')?.classList.add('hidden');
+  $('#view-recover').classList.remove('hidden');
+  // Sync logo/nombre con brand actual
+  const recLogo = $('#recover-logo');
+  if(recLogo){
+    if(brand.logo){ recLogo.innerHTML = `<img src="${brand.logo}" alt="logo">`; }
+    else {
+      const initials = (brand.name||'IT').split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();
+      recLogo.textContent = initials;
+    }
+  }
+}
+function hideRecoveryView(){
+  recoveryMode = false;
+  $('#view-recover').classList.add('hidden');
+  $('#view-login').classList.remove('hidden');
+}
+
+// Listener para el evento de recovery (link del correo)
+if(cloud.online){
+  cloud.client.auth.onAuthStateChange((event, sess) => {
+    if(event === 'PASSWORD_RECOVERY'){
+      showRecoveryView();
+    }
+  });
+}
+
+// Handler para guardar la nueva contraseña
+$('#rec-save')?.addEventListener('click', async () => {
+  const p1 = $('#rec-pass1').value;
+  const p2 = $('#rec-pass2').value;
+  if(!p1 || p1.length < 6) return toast('Contraseña mínimo 6 caracteres');
+  if(p1 !== p2) return toast('Las contraseñas no coinciden');
+  if(!cloud.online) return toast('Sin conexión a la nube');
+  const btn = $('#rec-save'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando…';
+  const { error } = await cloud.client.auth.updateUser({ password: p1 });
+  btn.disabled = false; btn.textContent = orig;
+  if(error){ return toast('Error: ' + error.message); }
+  toast('✓ Contraseña actualizada. Inicia sesión.');
+  // Cerrar sesión de recovery y volver al login
+  await cloud.client.auth.signOut();
+  $('#rec-pass1').value = ''; $('#rec-pass2').value = '';
+  hideRecoveryView();
+});
+
+// Handler "¿Olvidaste tu contraseña?"
+$('#login-forgot')?.addEventListener('click', async () => {
+  const email = $('#login-email').value.trim().toLowerCase();
+  if(!email) return toast('Escribe tu correo primero');
+  if(!cloud.online) return toast('Función disponible solo online');
+  if(!confirm(`Enviar correo de recuperación a ${email}?`)) return;
+  const btn = $('#login-forgot'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Enviando…';
+  const res = await cloud.sendPasswordResetEmail(email);
+  btn.disabled = false; btn.textContent = orig;
+  if(!res.ok) return toast('Error: ' + res.error);
+  toast('✓ Correo enviado. Revisa tu bandeja de entrada.');
+});
 
 function initState(){
   const today = new Date().toISOString().slice(0,10);
@@ -896,8 +1010,15 @@ $('#btn-logout').addEventListener('click', async () => {
 // Auto-login si Supabase ya tiene sesión activa
 (async function tryResumeSession(){
   if(!cloud.online) return;
+  // Si la URL trae hash de recovery, dejamos que el listener se haga cargo
+  const hash = window.location.hash || '';
+  if(hash.includes('type=recovery')){
+    // esperamos el evento PASSWORD_RECOVERY del onAuthStateChange
+    return;
+  }
   const sess = await cloud.currentSession();
   if(!sess?.user) return;
+  if(recoveryMode) return;
   const profile = await cloud.loadProfile(sess.user.id);
   if(!profile || profile.active === false) return;
   await completeLogin({
