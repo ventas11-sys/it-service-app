@@ -86,20 +86,39 @@ create trigger on_auth_user_created
   for each row execute function public.handle_new_user();
 
 -- ================ HELPER: rol del usuario actual ==========
+-- IMPORTANTE: estas funciones consultan public.profiles, que tiene RLS.
+-- Deben ser SECURITY DEFINER para saltarse el RLS y evitar recursión
+-- infinita cuando se usan dentro de las mismas políticas RLS.
 create or replace function public.current_role_v()
-returns text language sql stable as $$
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
   select role from public.profiles where id = auth.uid()
 $$;
 
 create or replace function public.is_admin()
-returns boolean language sql stable as $$
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
   select coalesce((select role in ('admin','super_admin','supervisor')
                    from public.profiles where id = auth.uid()), false)
 $$;
 
 create or replace function public.is_super_admin()
-returns boolean language sql stable as $$
-  select coalesce((select role = 'super_admin' from public.profiles where id = auth.uid()), false)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce((select role = 'super_admin'
+                   from public.profiles where id = auth.uid()), false)
 $$;
 
 -- ============================================================
