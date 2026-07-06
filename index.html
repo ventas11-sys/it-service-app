@@ -232,6 +232,20 @@ img{max-width:100%;display:block}
 .pdf-page .stars{color:#f59e0b;letter-spacing:2px;font-size:14px}
 .pdf-page .rating-pill{background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600}
 
+/* ===== Factura preliminar ===== */
+.pdf-page.preliminar{position:relative}
+.pdf-page .prelim-watermark{position:absolute;top:38%;left:50%;transform:translate(-50%,-50%) rotate(-24deg);font-size:110px;font-weight:900;color:rgba(239,68,68,.10);letter-spacing:12px;pointer-events:none;user-select:none;z-index:0;white-space:nowrap}
+.pdf-page.preliminar > *{position:relative;z-index:1}
+.pdf-page .prelim-banner{background:#fef2f2;border:2px solid #fecaca;color:#991b1b;padding:10px 14px;border-radius:8px;font-size:12px;text-align:center;margin-bottom:14px}
+.pdf-page .prelim-banner strong{letter-spacing:2px}
+.pdf-page .inv-table{width:100%;border-collapse:collapse;margin-top:8px}
+.pdf-page .inv-table th{background:var(--brand);color:#fff;padding:8px;font-size:11px;text-align:left}
+.pdf-page .inv-table td{padding:8px;border-bottom:1px solid #e2e8f0;font-size:11px}
+.pdf-page .inv-table td.r,.pdf-page .inv-table th.r{text-align:right}
+.pdf-page .inv-totals{margin-top:12px;background:#f8fafc;padding:12px;border-radius:6px}
+.pdf-page .inv-totals .row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px}
+.pdf-page .inv-totals .row.grand{border-top:2px solid var(--brand);padding-top:10px;margin-top:6px;font-size:16px;font-weight:800;color:var(--brand)}
+
 @media print{
   @page{
     margin:8mm 8mm 14mm 8mm;
@@ -914,8 +928,9 @@ function navigate(view){
   else if(view==='users') main.innerHTML = renderUsers();
   else if(view==='wizard') main.innerHTML = renderWizard();
   else if(view==='pdf') main.innerHTML = renderPDF();
-  // Hide bottom nav during wizard / pdf so action buttons are visible
-  const hideNav = (view==='wizard' || view==='pdf');
+  else if(view==='preliminar') main.innerHTML = renderPreliminar();
+  // Hide bottom nav during wizard / pdf / preliminar so action buttons are visible
+  const hideNav = (view==='wizard' || view==='pdf' || view==='preliminar');
   $('#bottomnav').classList.toggle('hide', hideNav);
   document.querySelector('.main').style.paddingBottom = hideNav ? '110px' : '96px';
   attachHandlers();
@@ -1567,13 +1582,96 @@ function attachHandlers(){
     setTimeout(()=>{ document.title = original; }, 1000);
   });
   $('#pdf-send')?.addEventListener('click', ()=>{
-    editingReport.status = 'EN_REVISION_ADMIN';
-    const i = state.reports.findIndex(r=>r.id===editingReport.id);
-    if(i>=0) state.reports[i] = editingReport;
+    const r = editingReport;
+    const c = getClient(r.clientId);
+    const to = (c.email || r.signer?.email || '').trim();
+    if(!to){
+      if(!confirm('Este cliente no tiene correo registrado. ¿Continuar de todos modos (podrás escribir el destinatario en tu app de correo)?')) return;
+    }
+    const subject = `Reporte de Servicio ${r.number} · ${brand.name||''}`.trim();
+    const t = calculateTimes(r.times||{});
+    const bodyLines = [
+      `Estimado/a ${c.contact || c.name || 'cliente'},`,
+      '',
+      `Adjunto el reporte de servicio ${r.number} realizado el ${fmtDate(r.date)}.`,
+      '',
+      `• Cliente: ${c.name||'—'}`,
+      `• Técnico: ${r.technician||'—'}`,
+      `• Trabajo en sitio: ${fmtMin(t.work_minutes)}`,
+      `• Traslado total: ${fmtMin(t.total_travel_minutes)}`,
+      `• Resumen: ${r.finalSummary || r.diagnosis || r.problem || '—'}`,
+      '',
+      'El detalle completo con firmas y fotos se encuentra en el PDF adjunto (imprímalo desde la app y adjúntelo antes de enviar).',
+      '',
+      'Ante cualquier consulta quedamos a su disposición.',
+      '',
+      `Atentamente,`,
+      `${session.user||''} · ${brand.name||''}`
+    ];
+    const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+    // Abre el cliente de correo
+    window.location.href = mailto;
+    // Marca el reporte como enviado a contabilidad
+    r.status = 'EN_REVISION_ADMIN';
+    const i = state.reports.findIndex(x=>x.id===r.id);
+    if(i>=0) state.reports[i] = r;
     saveState();
-    toast('Reporte enviado al cliente y a contabilidad');
+    toast('✉️ Se abrió tu app de correo. Adjunta el PDF antes de enviar.');
   });
   $('#pdf-back')?.addEventListener('click', ()=>navigate(session.role==='admin'?'admin':'detail'));
+
+  // Preliminar
+  $('#pre-back')?.addEventListener('click', ()=>navigate(session.role==='admin'?'admin':'detail'));
+  $('#pre-print')?.addEventListener('click', ()=>{
+    const original = document.title;
+    document.title = `Preliminar ${editingReport.number} - ${getClient(editingReport.clientId).name||''}`;
+    window.print();
+    setTimeout(()=>{ document.title = original; }, 1000);
+  });
+  $('#pre-mail')?.addEventListener('click', ()=>{
+    const r = editingReport;
+    const c = getClient(r.clientId);
+    const a = r.admin || {};
+    const t = calculateTimes(r.times||{});
+    const workHours = (t.work_minutes||0)/60;
+    const travelHours = (t.total_travel_minutes||0)/60;
+    const labor = workHours * (a.laborRate||0);
+    const travel = travelHours * (a.travelRate||0);
+    const materials = a.materials||0;
+    const expenses = a.expenses||0;
+    const subtotal = labor + travel + materials + expenses;
+    const tax = subtotal * 0.07;
+    const total = subtotal + tax - (a.discount||0);
+    const to = (c.email || r.signer?.email || '').trim();
+    if(!to){
+      if(!confirm('Este cliente no tiene correo registrado. ¿Continuar de todos modos?')) return;
+    }
+    const subject = `Factura PRELIMINAR ${r.number} · ${brand.name||''}`.trim();
+    const body = [
+      `Estimado/a ${c.contact || c.name || 'cliente'},`,
+      '',
+      `Adjunto la estimación PRELIMINAR de costos correspondiente al servicio ${r.number} realizado el ${fmtDate(r.date)}.`,
+      '',
+      `RESUMEN:`,
+      `• Mano de obra (${workHours.toFixed(2)}h): B/. ${labor.toFixed(2)}`,
+      `• Traslado (${travelHours.toFixed(2)}h): B/. ${travel.toFixed(2)}`,
+      `• Materiales: B/. ${materials.toFixed(2)}`,
+      `• Viáticos: B/. ${expenses.toFixed(2)}`,
+      `• ITBMS (7%): B/. ${tax.toFixed(2)}`,
+      (a.discount>0?`• Descuento: - B/. ${(+a.discount).toFixed(2)}`:''),
+      `• TOTAL ESTIMADO: B/. ${total.toFixed(2)}`,
+      '',
+      `⚠️ Este documento NO es una factura fiscal. Los valores pueden variar en la factura definitiva.`,
+      `El detalle completo con el desglose está en el PDF adjunto (imprímelo desde la app y adjúntalo antes de enviar).`,
+      '',
+      'Quedamos atentos a su confirmación.',
+      '',
+      'Atentamente,',
+      `${session.user||''} · ${brand.name||''}`
+    ].filter(Boolean).join('\n');
+    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    toast('✉️ Se abrió tu app de correo. Adjunta el PDF antes de enviar.');
+  });
 
   // Profile buttons
   $('#btn-set-from-profile')?.addEventListener('click', openSettings);
@@ -2230,11 +2328,35 @@ function openAdminReview(r){
       <div class="kv"><span class="k" style="font-weight:700">TOTAL</span><span class="v" style="color:var(--brand);font-size:18px" id="ad-total">B/. ${total.toFixed(2)}</span></div>
     </div>
     <div class="field"><label>Comentarios internos</label><textarea class="textarea" id="ad-notes">${esc(a.notes||'')}</textarea></div>
-    <div class="flex gap-8">
-      <button class="btn btn-outline" id="ad-reject" style="flex:1">Rechazar</button>
-      <button class="btn btn-primary" id="ad-approve" style="flex:1">Aprobar para facturar</button>
+
+    <div class="flex gap-8" style="margin-bottom:8px">
+      <button class="btn btn-outline" id="ad-preliminar" style="flex:1">
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Ver factura preliminar
+      </button>
+      <button class="btn btn-outline" id="ad-preliminar-mail" style="flex:1">
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Enviar preliminar por correo
+      </button>
     </div>
-    <button class="btn btn-ghost btn-block mt-8" id="ad-mark-billed">Marcar como facturado</button>
+
+    ${r.status==='EN_REVISION_ADMIN' ? `
+      <div class="flex gap-8">
+        <button class="btn btn-outline" id="ad-reject" style="flex:1">Rechazar</button>
+        <button class="btn btn-primary" id="ad-approve" style="flex:1">Aprobar para facturar</button>
+      </div>
+      <button class="btn btn-ghost btn-block mt-8" id="ad-mark-billed">Marcar como facturado</button>
+    ` : `
+      <div class="summary-pill green" style="margin-bottom:8px">
+        <span>✓ ${r.status==='FACTURADO'?'Facturado':'Aprobado para facturar'}</span>
+        <span style="font-size:11px">${esc(a.reviewedBy||'')}</span>
+      </div>
+      <button class="btn btn-primary btn-block" id="ad-save-edit">Guardar cambios</button>
+      <div class="flex gap-8 mt-8">
+        <button class="btn btn-outline" id="ad-reject" style="flex:1">Devolver a revisión</button>
+        ${r.status==='APROBADO_PARA_FACTURAR' ? `<button class="btn btn-outline" id="ad-mark-billed" style="flex:1">Marcar como facturado</button>` : ''}
+      </div>
+    `}
   `;
   openModal(html, () => {
     function recompute(){
@@ -2266,20 +2388,78 @@ function openAdminReview(r){
         reviewedBy: session.user
       };
     }
-    $('#ad-approve').addEventListener('click', ()=>{
+    $('#ad-approve')?.addEventListener('click', ()=>{
       r.admin = { ...gather(), approved:true };
       r.status = 'APROBADO_PARA_FACTURAR';
       saveState(); closeModal(); navigate('admin'); toast('Aprobado para facturar');
     });
-    $('#ad-reject').addEventListener('click', ()=>{
+    $('#ad-reject')?.addEventListener('click', ()=>{
+      const wasApproved = r.status !== 'EN_REVISION_ADMIN';
       r.admin = { ...gather(), approved:false };
       r.status = 'EN_REVISION_ADMIN';
-      saveState(); closeModal(); navigate('admin'); toast('Reporte devuelto al técnico');
+      saveState(); closeModal(); navigate('admin');
+      toast(wasApproved ? 'Reporte devuelto a revisión' : 'Reporte devuelto al técnico');
     });
-    $('#ad-mark-billed').addEventListener('click', ()=>{
+    $('#ad-mark-billed')?.addEventListener('click', ()=>{
       r.admin = { ...gather(), approved:true };
       r.status = 'FACTURADO';
       saveState(); closeModal(); navigate('admin'); toast('Marcado como facturado');
+    });
+    // Guardar cambios sin cambiar de estado (edición posterior a aprobación)
+    $('#ad-save-edit')?.addEventListener('click', ()=>{
+      r.admin = { ...gather(), approved: r.admin?.approved ?? true };
+      saveState(); closeModal(); navigate('admin'); toast('Cambios guardados ✓');
+    });
+    // Ver factura preliminar
+    $('#ad-preliminar')?.addEventListener('click', ()=>{
+      r.admin = { ...gather(), approved: r.admin?.approved ?? false };
+      const i = state.reports.findIndex(x=>x.id===r.id);
+      if(i>=0) state.reports[i] = r;
+      editingReport = r;
+      saveState();
+      closeModal();
+      navigate('preliminar');
+    });
+    // Enviar preliminar por correo (mailto directo)
+    $('#ad-preliminar-mail')?.addEventListener('click', ()=>{
+      r.admin = { ...gather(), approved: r.admin?.approved ?? false };
+      saveState();
+      const c2 = getClient(r.clientId);
+      const a2 = r.admin;
+      const t2 = calculateTimes(r.times||{});
+      const wh = (t2.work_minutes||0)/60, th = (t2.total_travel_minutes||0)/60;
+      const lb = wh*(a2.laborRate||0), tv = th*(a2.travelRate||0);
+      const mt = a2.materials||0, ex = a2.expenses||0;
+      const st = lb+tv+mt+ex, tx = st*0.07, to = st+tx-(a2.discount||0);
+      const dest = (c2.email || r.signer?.email || '').trim();
+      if(!dest){
+        if(!confirm('Este cliente no tiene correo registrado. ¿Continuar de todos modos?')) return;
+      }
+      const subject = `Factura PRELIMINAR ${r.number} · ${brand.name||''}`.trim();
+      const body = [
+        `Estimado/a ${c2.contact || c2.name || 'cliente'},`,
+        '',
+        `Adjunto la estimación PRELIMINAR de costos del servicio ${r.number} realizado el ${fmtDate(r.date)}.`,
+        '',
+        `RESUMEN:`,
+        `• Mano de obra (${wh.toFixed(2)}h): B/. ${lb.toFixed(2)}`,
+        `• Traslado (${th.toFixed(2)}h): B/. ${tv.toFixed(2)}`,
+        `• Materiales: B/. ${mt.toFixed(2)}`,
+        `• Viáticos: B/. ${ex.toFixed(2)}`,
+        `• ITBMS (7%): B/. ${tx.toFixed(2)}`,
+        (a2.discount>0?`• Descuento: - B/. ${(+a2.discount).toFixed(2)}`:''),
+        `• TOTAL ESTIMADO: B/. ${to.toFixed(2)}`,
+        '',
+        `⚠️ Este documento NO es una factura fiscal. Los valores pueden variar en la factura definitiva.`,
+        '',
+        'Quedamos atentos a su confirmación.',
+        '',
+        'Atentamente,',
+        `${session.user||''} · ${brand.name||''}`
+      ].filter(Boolean).join('\n');
+      window.location.href = `mailto:${encodeURIComponent(dest)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      closeModal();
+      toast('✉️ Se abrió tu app de correo');
     });
   });
 }
@@ -2496,6 +2676,153 @@ function renderPDF(){
        </td></tr>
       </tbody>
      </table>
+    </div>
+  `;
+}
+
+/* ============================================================
+   FACTURA PRELIMINAR
+   ============================================================ */
+function renderPreliminar(){
+  const r = editingReport; if(!r) return '';
+  const c = getClient(r.clientId);
+  const t = calculateTimes(r.times||{});
+  const a = r.admin || { laborRate:25, travelRate:15, expenses:0, materials:0, discount:0, billingType:'Mano de obra + materiales' };
+  const workHours = (t.work_minutes||0)/60;
+  const travelHours = (t.total_travel_minutes||0)/60;
+  const labor = workHours * (a.laborRate||0);
+  const travel = travelHours * (a.travelRate||0);
+  const materials = a.materials||0;
+  const expenses = a.expenses||0;
+  const subtotal = labor + travel + materials + expenses;
+  const tax = subtotal * 0.07;
+  const discount = a.discount||0;
+  const total = subtotal + tax - discount;
+  const today = new Date();
+  const validUntil = new Date(today.getTime() + 15*24*60*60*1000);
+
+  return `
+    <div class="pdf-toolbar">
+      <div style="flex:1;font-size:11px;color:var(--muted);align-self:center">Vista <strong>preliminar</strong> · No es factura fiscal</div>
+      <button class="btn btn-outline" id="pre-back"><svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><polyline points="15 18 9 12 15 6"/></svg> Volver</button>
+      <button class="btn btn-outline" id="pre-mail"><svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Enviar por correo</button>
+      <button class="btn btn-primary" id="pre-print"><svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Imprimir / Guardar PDF</button>
+    </div>
+
+    <div class="pdf-page preliminar">
+      <div class="prelim-watermark">PRELIMINAR</div>
+      <div class="prelim-banner">
+        <strong>FACTURA PRELIMINAR</strong> · Documento no fiscal · Solo referencia de costo · Válido hasta ${fmtDate(validUntil.toISOString())}
+      </div>
+
+      <div class="head">
+        <div class="head-top">FACTURA PRELIMINAR</div>
+        <div class="head-body">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div class="lg">${brand.logo?`<img src="${brand.logo}" alt="logo">`:esc((brand.name||'IT').split(/\s+/).map(s=>s[0]).slice(0,2).join(''))}</div>
+            <div>
+              <div style="font-weight:800;font-size:15px;color:var(--brand)">${esc(brand.name||'')}</div>
+              <div style="font-size:11px;color:var(--muted)">${esc(brand.tag||'')}</div>
+            </div>
+          </div>
+          <div class="num">
+            <div class="l">REFERENCIA</div>
+            <div class="v">${esc(r.number)}</div>
+            <div class="l" style="margin-top:6px">FECHA</div>
+            <div class="v" style="font-size:12px">${fmtDate(today.toISOString())}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="meta-row" style="grid-template-columns:1fr 1fr">
+        <div>
+          <span class="l">CLIENTE</span>
+          <span class="v">${esc(c.name||'—')}</span>
+        </div>
+        <div>
+          <span class="l">CONTACTO</span>
+          <span class="v">${esc(c.contact||'—')}${c.email?` · ${esc(c.email)}`:''}</span>
+        </div>
+        <div>
+          <span class="l">RUC / DV</span>
+          <span class="v">${esc(c.ruc||'—')}</span>
+        </div>
+        <div>
+          <span class="l">DIRECCIÓN</span>
+          <span class="v">${esc(c.address||'—')}</span>
+        </div>
+      </div>
+
+      <h2>DETALLE DEL SERVICIO</h2>
+      <div class="sec-body">
+        <div style="font-size:12px;line-height:1.6">
+          <strong>Servicio:</strong> ${esc(r.type||'—')} · ${esc(r.problem||'')}<br>
+          <strong>Técnico:</strong> ${esc(r.technician||'—')}<br>
+          <strong>Tipo de facturación:</strong> ${esc(a.billingType||'—')}
+        </div>
+
+        <table class="inv-table">
+          <thead>
+            <tr>
+              <th>Concepto</th>
+              <th class="r">Cantidad</th>
+              <th class="r">Tarifa</th>
+              <th class="r">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Mano de obra en sitio</td>
+              <td class="r">${workHours.toFixed(2)} h</td>
+              <td class="r">B/. ${(a.laborRate||0).toFixed(2)}</td>
+              <td class="r"><strong>B/. ${labor.toFixed(2)}</strong></td>
+            </tr>
+            <tr>
+              <td>Traslado</td>
+              <td class="r">${travelHours.toFixed(2)} h</td>
+              <td class="r">B/. ${(a.travelRate||0).toFixed(2)}</td>
+              <td class="r"><strong>B/. ${travel.toFixed(2)}</strong></td>
+            </tr>
+            ${(r.materials||[]).filter(m=>m.billable).map(m=>`
+              <tr>
+                <td>${esc(m.name||'Material')}${m.note?`<div style="font-size:9px;color:var(--muted)">${esc(m.note)}</div>`:''}</td>
+                <td class="r">${m.qty} ${esc(m.unit||'')}</td>
+                <td class="r">${m.unitPrice?`B/. ${(+m.unitPrice).toFixed(2)}`:'—'}</td>
+                <td class="r"><strong>B/. ${(m.qty * (m.unitPrice||0)).toFixed(2)}</strong></td>
+              </tr>`).join('') || (materials>0?`
+              <tr>
+                <td>Materiales varios</td>
+                <td class="r">1</td>
+                <td class="r">B/. ${materials.toFixed(2)}</td>
+                <td class="r"><strong>B/. ${materials.toFixed(2)}</strong></td>
+              </tr>`:'')}
+            ${expenses>0?`
+              <tr>
+                <td>Viáticos</td>
+                <td class="r">—</td>
+                <td class="r">—</td>
+                <td class="r"><strong>B/. ${expenses.toFixed(2)}</strong></td>
+              </tr>`:''}
+          </tbody>
+        </table>
+
+        <div class="inv-totals">
+          <div class="row"><span>Subtotal</span><span>B/. ${subtotal.toFixed(2)}</span></div>
+          <div class="row"><span>ITBMS (7%)</span><span>B/. ${tax.toFixed(2)}</span></div>
+          ${discount>0?`<div class="row" style="color:var(--danger)"><span>Descuento</span><span>- B/. ${discount.toFixed(2)}</span></div>`:''}
+          <div class="row grand"><span>TOTAL ESTIMADO</span><span>B/. ${total.toFixed(2)}</span></div>
+        </div>
+
+        <div style="margin-top:14px;font-size:10px;color:var(--muted);line-height:1.5">
+          <strong>Notas:</strong> Este documento es una estimación preliminar del costo del servicio realizado.
+          Los valores pueden variar en la factura definitiva. No sustituye la factura fiscal.
+          Precios en Balboas (B/.), incluyen ITBMS al 7%. Vigencia de la estimación: 15 días desde la emisión.
+        </div>
+      </div>
+
+      <div class="foot">
+        ${esc(brand.name)} · ${brand.tag?esc(brand.tag)+' · ':''}Documento generado el ${fmtDate(today.toISOString())}
+      </div>
     </div>
   `;
 }
