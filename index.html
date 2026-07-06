@@ -666,9 +666,8 @@ function sampleReport(num, clientId, status, date, type, prio, desc){
       work_started_at:`${date}T09:20`,
       work_finished_at:`${date}T12:45`,
       departure_site_at:`${date}T12:55`,
-      arrival_base_at:`${date}T13:55`,
-      initial_km:15230, final_km:15320
-    } : { initial_km:0, final_km:0 },
+      arrival_base_at:`${date}T13:55`
+    } : {},
     tasks: status==='EN_REVISION_ADMIN' ? [
       { id:'t1', cat:'Diagnóstico', desc:'Diagnóstico de rendimiento del equipo', min:30, result:'Completada' },
       { id:'t2', cat:'Mantenimiento', desc:'Limpieza física interna (polvo)', min:45, result:'Completada' },
@@ -748,15 +747,13 @@ function calculateTimes(t){
   const travelReturn = diffMinutes(t.departure_site_at, t.arrival_base_at);
   const totalTravel = travelToClient + travelReturn;
   const totalService = workMinutes + totalTravel;
-  const distance = (t.final_km && t.initial_km) ? Math.max(0, t.final_km - t.initial_km) : 0;
   return {
     travel_to_client_minutes: travelToClient,
     work_minutes: workMinutes,
     time_on_site_minutes: timeOnSite,
     travel_return_minutes: travelReturn,
     total_travel_minutes: totalTravel,
-    total_service_minutes: totalService,
-    distance_km: distance
+    total_service_minutes: totalService
   };
 }
 function statusBadge(s){
@@ -1106,7 +1103,6 @@ function detailResumen(r,c,t){
       <div><div class="text-sm text-muted">Llegada a base</div><div style="font-weight:600">${fmtTime(r.times?.arrival_base_at)}</div></div>
     </div>
     <div class="summary-pill purple"><span>Tiempo total de traslado</span><span>${fmtMin(t.total_travel_minutes)}</span></div>
-    <div class="summary-pill" style="margin-top:6px"><span>Distancia recorrida</span><span>${t.distance_km||0} km</span></div>
 
     <h3 class="section-title mt-16 mb-8"><svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Resumen de tiempos</h3>
     <div class="grid-2">
@@ -1133,7 +1129,7 @@ function openNewReport(){
     problemSolved: '', canOperate: '', pending: 'No', pendingDetail: '', nextAction: '',
     technician: session.userObj?.name || session.user || 'José Pérez',
     technicianPhone: session.userObj?.phone || '6001-5678',
-    times: { initial_km:0, final_km:0 },
+    times: {},
     tasks: [], materials: [], photos: [],
     signature: null, signer: {}, admin: null,
     isNew: true
@@ -1285,18 +1281,6 @@ function wizStepTrabajo(r){
       <div class="field"><label>Salida del cliente <span class="req">*</span></label><input class="input" type="datetime-local" data-bind="times.departure_site_at" value="${esc(t.departure_site_at||'')}"></div>
       <div class="field"><label>Llegada a base / oficina <span class="req">*</span></label><input class="input" type="datetime-local" data-bind="times.arrival_base_at" value="${esc(t.arrival_base_at||'')}"></div>
       <div class="summary-pill purple"><span>Tiempo total de traslado</span><span>${fmtMin(c.total_travel_minutes)}</span></div>
-    </div>
-    <div class="card">
-      <h3 class="section-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Kilometraje</h3>
-      <div class="grid-2">
-        <div class="field"><label>Kilometraje inicial</label>
-          <div class="input-suffix"><input class="input" type="number" data-bind="times.initial_km" value="${t.initial_km||0}"><span class="unit">km</span></div>
-        </div>
-        <div class="field"><label>Kilometraje final</label>
-          <div class="input-suffix"><input class="input" type="number" data-bind="times.final_km" value="${t.final_km||0}"><span class="unit">km</span></div>
-        </div>
-      </div>
-      <div class="summary-pill"><span>Distancia recorrida</span><span>${c.distance_km||0} km</span></div>
       <div class="summary-pill green mt-8"><span>Tiempo total del servicio</span><span>${fmtMin(c.total_service_minutes)}</span></div>
     </div>
   `;
@@ -2137,7 +2121,6 @@ function openAdminReview(r){
     <div class="kv"><span class="k">Técnico</span><span class="v">${esc(r.technician)}</span></div>
     <div class="kv"><span class="k">Trabajo</span><span class="v">${fmtMin(t.work_minutes)}</span></div>
     <div class="kv"><span class="k">Traslado</span><span class="v">${fmtMin(t.total_travel_minutes)}</span></div>
-    <div class="kv"><span class="k">Distancia</span><span class="v">${t.distance_km||0} km</span></div>
     <h4 style="margin:16px 0 8px;font-size:14px">Tipo de facturación</h4>
     <div class="field"><select class="select" id="ad-btype">
       ${['Por hora','Tarifa fija','Mano de obra + materiales','Materiales solamente','Incluido en contrato','Garantía','No facturable','Requiere cotización'].map(o=>`<option ${a.billingType===o?'selected':''}>${o}</option>`).join('')}
@@ -2311,12 +2294,6 @@ function renderPDF(){
           <div>Trabajo en sitio: <strong>${fmtMin(t.work_minutes)}</strong></div>
           <div>Tiempo total de traslado: <strong>${fmtMin(t.total_travel_minutes)}</strong></div>
           <div style="color:var(--brand);font-weight:700;margin-top:4px">TOTAL DEL SERVICIO: ${fmtMin(t.total_service_minutes)}</div>
-        </div>
-        <div>
-          <div style="font-weight:700;color:var(--brand);margin-bottom:4px">KILOMETRAJE</div>
-          <div>Kilometraje inicial: <strong>${r.times?.initial_km||0}</strong></div>
-          <div>Kilometraje final: <strong>${r.times?.final_km||0}</strong></div>
-          <div>Distancia recorrida: <strong>${t.distance_km||0} km</strong></div>
         </div>
       </div>
 
