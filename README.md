@@ -66,7 +66,38 @@ cualquier dispositivo.
    > real está en las políticas RLS que ya vienen en `supabase-schema.sql`.
    > **NO** pongas nunca la `service_role` key en `config.js`.
 
-### 5) Subir a GitHub y activar GitHub Pages
+### 5) Deploy de la Edge Function `admin-user`
+
+Esta función permite al **Super Admin** administrar cuentas (asignar
+contraseñas, cambiar correos, borrar usuarios) sin exponer la `service_role`
+key en el navegador.
+
+**Opción A — Editor web de Supabase (más fácil, sin instalar nada)**
+
+1. En el panel del proyecto → **Edge Functions** → **Create a new function**.
+2. Nombre: `admin-user`. Clic en **Create function**.
+3. Abre el archivo `supabase/functions/admin-user/index.ts` de este repo,
+   copia todo el contenido y pégalo en el editor.
+4. Clic en **Deploy function** (arriba a la derecha).
+5. En **Function settings** → **Verify JWT** → **Desactiva** el toggle
+   (la función valida el JWT por su cuenta con lógica extra).
+6. Añade los secrets (**Function settings → Secrets → Add secret**):
+   - `SUPABASE_URL` = mismo Project URL de siempre
+   - `SUPABASE_ANON_KEY` = misma anon key de siempre
+   - `SUPABASE_SERVICE_ROLE_KEY` = **Project Settings → API → service_role key**
+     ⚠️ Esta key NO va en `config.js`. Solo vive dentro de la Edge Function.
+
+**Opción B — Supabase CLI (para desarrolladores)**
+
+```bash
+npm i -g supabase
+supabase login
+supabase link --project-ref TU_PROJECT_REF
+supabase functions deploy admin-user --no-verify-jwt
+supabase secrets set SUPABASE_URL=... SUPABASE_ANON_KEY=... SUPABASE_SERVICE_ROLE_KEY=...
+```
+
+### 6) Subir a GitHub y activar GitHub Pages
 
 Si aún no tienes repo:
 
@@ -95,7 +126,7 @@ Alternativa más simple (sin GitHub Actions):
 - **Settings → Pages → Branch: main / (root)** → Save.
 - Misma URL, actualiza cada vez que haces push.
 
-### 6) ¡Listo!
+### 7) ¡Listo!
 
 Entra a la URL desde tu celular. Inicia sesión con el Super Admin que creaste.
 Desde **Perfil → Gestionar usuarios**, crea las cuentas de los técnicos.

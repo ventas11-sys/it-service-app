@@ -603,6 +603,46 @@ const cloud = {
   async deleteProfile(id){
     if(!this.online) return;
     await this.client.from('profiles').delete().eq('id', id);
+  },
+
+  /* -------- Admin API (via Edge Function) -------- */
+  async callAdmin(payload){
+    if(!this.online) return { ok:false, error:'Supabase no configurado' };
+    const { data: { session } } = await this.client.auth.getSession();
+    const token = session?.access_token;
+    if(!token) return { ok:false, error:'Sin sesión' };
+    try {
+      const res = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/admin-user`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) return { ok:false, error: data.error || `HTTP ${res.status}` };
+      return { ok:true, data };
+    } catch(e){
+      return { ok:false, error: e.message || 'Error de red' };
+    }
+  },
+  async setUserPassword(targetId, password){
+    return this.callAdmin({ action:'setPassword', targetId, password });
+  },
+  async setUserEmail(targetId, email){
+    return this.callAdmin({ action:'setEmail', targetId, email });
+  },
+  async deleteAuthUser(targetId){
+    return this.callAdmin({ action:'deleteUser', targetId });
+  },
+  async sendPasswordResetEmail(email){
+    if(!this.online) return { ok:false, error:'Supabase no configurado' };
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { error } = await this.client.auth.resetPasswordForEmail(email, { redirectTo });
+    if(error) return { ok:false, error: error.message };
+    return { ok:true };
   }
 };
 cloud.init();
@@ -1442,11 +1482,20 @@ function attachHandlers(){
     if(u) openUserModal(u);
   }));
   $$('[data-del-user]').forEach(b => b.addEventListener('click', async ()=>{
-    if(!confirm('¿Borrar este usuario? (Su cuenta de acceso seguirá existiendo hasta que un admin la elimine desde Supabase)')) return;
+    if(!confirm('¿Borrar este usuario? Se eliminará su cuenta de acceso y no podrá iniciar sesión.')) return;
     const id = b.dataset.delUser;
+    if(cloud.online){
+      const res = await cloud.deleteAuthUser(id);
+      if(!res.ok){
+        // Si falla la Edge Function, al menos limpiamos el perfil
+        await cloud.deleteProfile(id);
+        toast('Perfil borrado. Auth: ' + res.error);
+      } else {
+        toast('Usuario borrado ✓');
+      }
+    }
     state.users = state.users.filter(x=>x.id!==id);
-    await cloud.deleteProfile(id);
-    saveState(); navigate('users'); toast('Usuario borrado');
+    saveState(); navigate('users');
   }));
   $$('[data-del-task]').forEach(b => b.addEventListener('click',()=>{
     editingReport.tasks = editingReport.tasks.filter(t=>t.id!==b.dataset.delTask);
@@ -1743,28 +1792,50 @@ const ROLE_LABEL = {
 function openUserModal(existing){
   const u = existing || { id:'', name:'', email:'', password:'', role:'technician', phone:'', active:true };
   const isEdit = !!existing;
+  const originalEmail = (u.email || '').toLowerCase();
   const html = `
     <div class="modal-head"><h3>${isEdit?'Editar':'Nuevo'} usuario</h3><button class="x" data-close><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
     <div class="field"><label>Nombre completo <span class="req">*</span></label><input class="input" id="us-name" value="${esc(u.name)}"></div>
     <div class="field"><label>Correo (usuario para login) <span class="req">*</span></label><input class="input" type="email" id="us-email" value="${esc(u.email)}" autocomplete="off"></div>
-    <div class="field"><label>${isEdit?'Nueva contraseña (deja vacío para no cambiar)':'Contraseña'} <span class="req">${isEdit?'':'*'}</span></label><input class="input" type="text" id="us-pass" value="${esc(isEdit?'':u.password)}" placeholder="${isEdit?'••••••':'Mínimo 4 caracteres'}" autocomplete="new-password"></div>
+    ${isEdit ? '' : `
+    <div class="field"><label>Contraseña inicial <span class="req">*</span></label>
+      <input class="input" type="text" id="us-pass" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+      <div class="text-sm text-muted" style="margin-top:4px">Compártela con el usuario. Podrá cambiarla luego.</div>
+    </div>`}
     <div class="field"><label>Teléfono</label><input class="input" id="us-phone" value="${esc(u.phone||'')}"></div>
     <div class="field"><label>Rol <span class="req">*</span></label>
       <select class="select" id="us-role">
         <option value="technician" ${u.role==='technician'?'selected':''}>Técnico — crea reportes y firmas</option>
         <option value="supervisor" ${u.role==='supervisor'?'selected':''}>Supervisor — corrige reportes</option>
         <option value="admin" ${u.role==='admin'?'selected':''}>Contabilidad — aprueba facturación</option>
-        <option value="super_admin" ${u.role==='super_admin'?'selected':''}>Super Admin — gestiona usuarios y tarifas</option>
+        <option value="super_admin" ${u.role==='super_admin'?'selected':''}>Super Admin — gestiona usuarios</option>
       </select>
     </div>
     <div class="field"><label class="flex"><input type="checkbox" id="us-active" ${u.active!==false?'checked':''} style="width:18px;height:18px"> Usuario activo</label></div>
     <button class="btn btn-primary btn-block" id="us-save">${isEdit?'Guardar cambios':'Crear usuario'}</button>
+
+    ${isEdit && cloud.online ? `
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border)">
+        <h4 style="margin:0 0 12px;font-size:14px;color:var(--text)">🔐 Seguridad</h4>
+        <button class="btn btn-outline btn-block" id="us-set-pass" style="margin-bottom:8px">
+          Asignar nueva contraseña ahora
+        </button>
+        <button class="btn btn-outline btn-block" id="us-reset-mail" style="margin-bottom:8px">
+          Enviar correo de reseteo al usuario
+        </button>
+        <div class="text-sm text-muted" style="line-height:1.5">
+          <strong>Asignar</strong> = tú defines la clave y se la das.<br>
+          <strong>Enviar correo</strong> = el usuario recibe un link para elegirla.
+        </div>
+      </div>
+    `:''}
   `;
   openModal(html, () => {
+    // ---- Guardar cambios / crear ----
     $('#us-save').addEventListener('click', async () => {
       const name = $('#us-name').value.trim();
       const email = $('#us-email').value.trim().toLowerCase();
-      const pass = $('#us-pass').value;
+      const pass = isEdit ? '' : ($('#us-pass')?.value || '');
       if(!name){ return toast('Falta nombre'); }
       if(!email){ return toast('Falta correo'); }
       if(!isEdit && (!pass || pass.length<6)){ return toast('Contraseña mínimo 6 caracteres'); }
@@ -1774,7 +1845,6 @@ function openUserModal(existing){
       const btn = $('#us-save'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando…';
 
       if(cloud.online && !isEdit){
-        // Crear la cuenta en Supabase Auth (el trigger crea el perfil base)
         const { data: signRes, error: signErr } = await cloud.client.auth.signUp({
           email, password: pass,
           options: { data: { name, phone: $('#us-phone').value.trim(), role: $('#us-role').value } }
@@ -1799,12 +1869,20 @@ function openUserModal(existing){
         saveJSON(STORAGE_KEY, state);
         btn.disabled = false; btn.textContent = orig;
         closeModal();
-        toast('Usuario creado ✓ (se envió correo de confirmación si está activado)');
+        toast('Usuario creado ✓');
         if(currentView==='users') navigate('users');
         return;
       }
 
       if(cloud.online && isEdit){
+        // Si cambió el correo, actualizarlo en auth via Edge Function
+        if(email !== originalEmail){
+          const emailRes = await cloud.setUserEmail(u.id, email);
+          if(!emailRes.ok){
+            btn.disabled = false; btn.textContent = orig;
+            return toast('Error cambiando correo: ' + emailRes.error);
+          }
+        }
         const data = {
           id: u.id, name, email,
           phone: $('#us-phone').value.trim(),
@@ -1818,7 +1896,7 @@ function openUserModal(existing){
         saveJSON(STORAGE_KEY, state);
         btn.disabled = false; btn.textContent = orig;
         closeModal();
-        toast('Usuario actualizado');
+        toast('Usuario actualizado ✓');
         if(currentView==='users') navigate('users');
         return;
       }
@@ -1843,6 +1921,28 @@ function openUserModal(existing){
       closeModal();
       toast(isEdit?'Usuario actualizado':'Usuario creado');
       if(currentView==='users') navigate('users');
+    });
+
+    // ---- Asignar nueva contraseña (super admin, via Edge Function) ----
+    $('#us-set-pass')?.addEventListener('click', async () => {
+      const np = prompt(`Nueva contraseña para ${u.name}:\n(mínimo 6 caracteres)`);
+      if(np === null) return;
+      if(!np || np.length < 6) return toast('Contraseña mínimo 6 caracteres');
+      const btn = $('#us-set-pass'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Aplicando…';
+      const res = await cloud.setUserPassword(u.id, np);
+      btn.disabled = false; btn.textContent = orig;
+      if(!res.ok) return toast('Error: ' + res.error);
+      toast('✓ Contraseña actualizada. Compártela con el usuario.');
+    });
+
+    // ---- Enviar reset por correo ----
+    $('#us-reset-mail')?.addEventListener('click', async () => {
+      if(!confirm(`Enviar correo con link de reseteo a ${u.email}?`)) return;
+      const btn = $('#us-reset-mail'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Enviando…';
+      const res = await cloud.sendPasswordResetEmail(u.email);
+      btn.disabled = false; btn.textContent = orig;
+      if(!res.ok) return toast('Error: ' + res.error);
+      toast('✓ Correo enviado');
     });
   });
 }
