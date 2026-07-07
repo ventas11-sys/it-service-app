@@ -58,6 +58,16 @@ create table if not exists public.app_settings (
   updated_by uuid references auth.users(id) on delete set null
 );
 
+-- ================ GRANTS ===================================
+-- Sin GRANTs, los roles del cliente reciben 'permission denied for table'
+-- incluso si las políticas RLS son correctas. Postgres verifica grants
+-- ANTES de evaluar las políticas RLS.
+grant usage on schema public to authenticated, anon, service_role;
+grant all on public.profiles     to authenticated, anon, service_role;
+grant all on public.clients      to authenticated, anon, service_role;
+grant all on public.reports      to authenticated, anon, service_role;
+grant all on public.app_settings to authenticated, anon, service_role;
+
 -- ================ TRIGGER: updated_at ======================
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql as $$
