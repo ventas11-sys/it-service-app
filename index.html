@@ -366,25 +366,7 @@ img{max-width:100%;display:block}
       <input type="password" class="input" id="login-pass" autocomplete="current-password">
     </div>
     <button class="btn btn-primary btn-block" id="login-btn">Iniciar sesión</button>
-    <button class="btn btn-ghost btn-block" id="login-forgot" style="font-size:13px;margin-top:10px">¿Olvidaste tu contraseña?</button>
-  </div>
-</div>
-
-<!-- ===================== NUEVA CONTRASEÑA (después de reset) ===================== -->
-<div id="view-recover" class="login hidden">
-  <div class="login-card">
-    <div class="login-logo" id="recover-logo">IT</div>
-    <h1>Elige tu nueva contraseña</h1>
-    <p>Tu enlace de recuperación es válido. Escribe una clave nueva de mínimo 6 caracteres.</p>
-    <div class="field">
-      <label>Nueva contraseña</label>
-      <input type="password" class="input" id="rec-pass1" autocomplete="new-password">
-    </div>
-    <div class="field">
-      <label>Repite la contraseña</label>
-      <input type="password" class="input" id="rec-pass2" autocomplete="new-password">
-    </div>
-    <button class="btn btn-primary btn-block" id="rec-save">Guardar contraseña</button>
+    <p style="text-align:center;font-size:12px;color:var(--muted);margin:14px 0 0">Si olvidaste tu contraseña, contacta al administrador.</p>
   </div>
 </div>
 
@@ -695,85 +677,9 @@ const cloud = {
   },
   async deleteAuthUser(targetId){
     return this.callAdmin({ action:'deleteUser', targetId });
-  },
-  async sendPasswordResetEmail(email){
-    if(!this.online) return { ok:false, error:'Supabase no configurado' };
-    const redirectTo = window.location.origin + window.location.pathname;
-    const { error } = await this.client.auth.resetPasswordForEmail(email, { redirectTo });
-    if(error) return { ok:false, error: error.message };
-    return { ok:true };
   }
 };
 cloud.init();
-
-/* ============================================================
-   RECOVERY / RESET PASSWORD FLOW
-   ============================================================
-   Cuando el usuario abre el link del correo de reset, Supabase
-   emite el evento PASSWORD_RECOVERY. Debemos mostrar la pantalla
-   para elegir nueva contraseña y llamar updateUser({password}).
-   ============================================================ */
-let recoveryMode = false;
-function showRecoveryView(){
-  recoveryMode = true;
-  $('#view-login').classList.add('hidden');
-  $('#app')?.classList.add('hidden');
-  $('#view-recover').classList.remove('hidden');
-  // Sync logo/nombre con brand actual
-  const recLogo = $('#recover-logo');
-  if(recLogo){
-    if(brand.logo){ recLogo.innerHTML = `<img src="${brand.logo}" alt="logo">`; }
-    else {
-      const initials = (brand.name||'IT').split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();
-      recLogo.textContent = initials;
-    }
-  }
-}
-function hideRecoveryView(){
-  recoveryMode = false;
-  $('#view-recover').classList.add('hidden');
-  $('#view-login').classList.remove('hidden');
-}
-
-// Listener para el evento de recovery (link del correo)
-if(cloud.online){
-  cloud.client.auth.onAuthStateChange((event, sess) => {
-    if(event === 'PASSWORD_RECOVERY'){
-      showRecoveryView();
-    }
-  });
-}
-
-// Handler para guardar la nueva contraseña
-$('#rec-save')?.addEventListener('click', async () => {
-  const p1 = $('#rec-pass1').value;
-  const p2 = $('#rec-pass2').value;
-  if(!p1 || p1.length < 6) return toast('Contraseña mínimo 6 caracteres');
-  if(p1 !== p2) return toast('Las contraseñas no coinciden');
-  if(!cloud.online) return toast('Sin conexión a la nube');
-  const btn = $('#rec-save'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando…';
-  const { error } = await cloud.client.auth.updateUser({ password: p1 });
-  btn.disabled = false; btn.textContent = orig;
-  if(error){ return toast('Error: ' + error.message); }
-  toast('✓ Contraseña actualizada. Inicia sesión.');
-  // Cerrar sesión de recovery y volver al login
-  await cloud.client.auth.signOut();
-  $('#rec-pass1').value = ''; $('#rec-pass2').value = '';
-  hideRecoveryView();
-});
-
-// Handler "¿Olvidaste tu contraseña?"
-$('#login-forgot')?.addEventListener('click', async () => {
-  const email = $('#login-email').value.trim().toLowerCase();
-  if(!email) return toast('Escribe tu correo primero');
-  if(!cloud.online) return toast('Función disponible solo online');
-  if(!confirm(`Enviar correo de recuperación a ${email}?`)) return;
-  const btn = $('#login-forgot'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Enviando…';
-  const res = await cloud.sendPasswordResetEmail(email);
-  btn.disabled = false; btn.textContent = orig;
-  if(!res.ok) return toast('Error: ' + res.error);
-  toast('✓ Correo enviado. Revisa tu bandeja de entrada.');
-});
 
 function initState(){
   const today = new Date().toISOString().slice(0,10);
@@ -1010,15 +916,8 @@ $('#btn-logout').addEventListener('click', async () => {
 // Auto-login si Supabase ya tiene sesión activa
 (async function tryResumeSession(){
   if(!cloud.online) return;
-  // Si la URL trae hash de recovery, dejamos que el listener se haga cargo
-  const hash = window.location.hash || '';
-  if(hash.includes('type=recovery')){
-    // esperamos el evento PASSWORD_RECOVERY del onAuthStateChange
-    return;
-  }
   const sess = await cloud.currentSession();
   if(!sess?.user) return;
-  if(recoveryMode) return;
   const profile = await cloud.loadProfile(sess.user.id);
   if(!profile || profile.active === false) return;
   await completeLogin({
@@ -2059,18 +1958,14 @@ function openUserModal(existing){
     <div class="field"><label class="flex"><input type="checkbox" id="us-active" ${u.active!==false?'checked':''} style="width:18px;height:18px"> Usuario activo</label></div>
     <button class="btn btn-primary btn-block" id="us-save">${isEdit?'Guardar cambios':'Crear usuario'}</button>
 
-    ${isEdit && cloud.online ? `
+    ${isEdit && cloud.online && isSuperAdmin() ? `
       <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border)">
         <h4 style="margin:0 0 12px;font-size:14px;color:var(--text)">🔐 Seguridad</h4>
-        <button class="btn btn-outline btn-block" id="us-set-pass" style="margin-bottom:8px">
-          Asignar nueva contraseña ahora
+        <button class="btn btn-outline btn-block" id="us-set-pass">
+          Asignar nueva contraseña
         </button>
-        <button class="btn btn-outline btn-block" id="us-reset-mail" style="margin-bottom:8px">
-          Enviar correo de reseteo al usuario
-        </button>
-        <div class="text-sm text-muted" style="line-height:1.5">
-          <strong>Asignar</strong> = tú defines la clave y se la das.<br>
-          <strong>Enviar correo</strong> = el usuario recibe un link para elegirla.
+        <div class="text-sm text-muted" style="line-height:1.5;margin-top:8px">
+          Define una nueva clave y compártela con el usuario. Solo el Super Admin puede cambiar contraseñas.
         </div>
       </div>
     `:''}
@@ -2178,16 +2073,6 @@ function openUserModal(existing){
       btn.disabled = false; btn.textContent = orig;
       if(!res.ok) return toast('Error: ' + res.error);
       toast('✓ Contraseña actualizada. Compártela con el usuario.');
-    });
-
-    // ---- Enviar reset por correo ----
-    $('#us-reset-mail')?.addEventListener('click', async () => {
-      if(!confirm(`Enviar correo con link de reseteo a ${u.email}?`)) return;
-      const btn = $('#us-reset-mail'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Enviando…';
-      const res = await cloud.sendPasswordResetEmail(u.email);
-      btn.disabled = false; btn.textContent = orig;
-      if(!res.ok) return toast('Error: ' + res.error);
-      toast('✓ Correo enviado');
     });
   });
 }
