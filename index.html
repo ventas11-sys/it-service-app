@@ -367,6 +367,7 @@ img{max-width:100%;display:block}
     </div>
     <button class="btn btn-primary btn-block" id="login-btn">Iniciar sesión</button>
     <p style="text-align:center;font-size:12px;color:var(--muted);margin:14px 0 0">Si olvidaste tu contraseña, contacta al administrador.</p>
+    <p id="login-version" style="text-align:center;font-size:11px;color:var(--muted);margin:20px 0 0;letter-spacing:.02em"></p>
   </div>
 </div>
 
@@ -456,6 +457,12 @@ img{max-width:100%;display:block}
 <div class="toast" id="toast"></div>
 
 <script>
+/* ============================================================
+   VERSIÓN DE LA APP
+   ============================================================ */
+const APP_VERSION = '1.4';
+const APP_UPDATED = '2026-07-06';
+
 /* ============================================================
    STATE & PERSISTENCE
    ============================================================ */
@@ -772,6 +779,13 @@ function applyBrand(){
   });
   const tn = document.getElementById('top-name'); if(tn) tn.textContent = brand.name;
   const ln = document.getElementById('login-company'); if(ln) ln.textContent = brand.name;
+  const lv = document.getElementById('login-version');
+  if(lv) lv.textContent = `v${APP_VERSION} · Actualizada ${fmtLongDate(APP_UPDATED)}`;
+}
+function fmtLongDate(iso){
+  try {
+    return new Date(iso+'T12:00').toLocaleDateString('es-PA',{day:'2-digit',month:'long',year:'numeric'});
+  } catch(e){ return iso; }
 }
 applyBrand();
 
@@ -1108,6 +1122,12 @@ function renderProfile(){
       ` : ''}
     </div>
     ${session.role === 'super_admin' && !cloud.online ? `<button class="btn btn-danger btn-block mt-12" id="btn-reset">Borrar todos los datos locales</button>` : ''}
+
+    <h3 class="section-title">Acerca de</h3>
+    <div class="card" style="text-align:center;padding:14px">
+      <div style="font-weight:700;color:var(--brand)">IT Service Reports · v${esc(APP_VERSION)}</div>
+      <div class="text-sm text-muted" style="margin-top:4px">Última actualización: ${esc(fmtLongDate(APP_UPDATED))}</div>
+    </div>
   `;
 }
 
