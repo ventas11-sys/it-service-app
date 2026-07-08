@@ -3,6 +3,7 @@
 // Edge Function: admin-user
 // ============================================================
 // Permite al SUPER ADMIN administrar cuentas de auth desde la app:
+//   - createUser:  crea la cuenta (auth+profile) con email confirmado
 //   - setPassword: asigna una nueva contraseña a un usuario
 //   - setEmail:    cambia el correo (login) de un usuario
 //   - deleteUser:  elimina la cuenta de auth (y por cascada el profile)
@@ -64,8 +65,8 @@ serve(async (req) => {
 
   let body: any = null;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-  const { action, targetId, email, password } = body || {};
-  if (!action || !targetId) return json({ error: "Faltan action/targetId" }, 400);
+  const { action, targetId, email, password, name, phone, role } = body || {};
+  if (!action) return json({ error: "Falta action" }, 400);
 
   // Cliente con service role — para operar en auth.admin
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -73,11 +74,48 @@ serve(async (req) => {
   });
 
   try {
+    if (action === "createUser") {
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return json({ error: "Correo inválido" }, 400);
+      }
+      if (!password || String(password).length < 6) {
+        return json({ error: "Contraseña mínimo 6 caracteres" }, 400);
+      }
+      // Crear en auth con email ya confirmado
+      const { data: created, error } = await admin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { name, phone, role },
+      });
+      if (error) return json({ error: error.message }, 400);
+      const uid = created.user?.id;
+      if (!uid) return json({ error: "No se pudo obtener el ID del usuario" }, 500);
+      // Crear/actualizar el profile
+      const profile = {
+        id: uid,
+        name: name || email.split("@")[0],
+        email,
+        phone: phone || null,
+        role: role || "technician",
+        active: true,
+      };
+      const { error: pErr } = await admin.from("profiles").upsert(profile, { onConflict: "id" });
+      if (pErr) return json({ error: `Auth creado pero profile falló: ${pErr.message}` }, 500);
+      return json({ ok: true, id: uid });
+    }
+
+    if (!targetId) return json({ error: "Falta targetId" }, 400);
+
     if (action === "setPassword") {
       if (!password || String(password).length < 6) {
         return json({ error: "Contraseña mínimo 6 caracteres" }, 400);
       }
-      const { error } = await admin.auth.admin.updateUserById(targetId, { password });
+      // También aseguramos que quede confirmado — evita "Credenciales incorrectas" luego
+      const { error } = await admin.auth.admin.updateUserById(targetId, {
+        password,
+        email_confirm: true,
+      });
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
     }

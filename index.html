@@ -684,6 +684,9 @@ const cloud = {
   },
   async deleteAuthUser(targetId){
     return this.callAdmin({ action:'deleteUser', targetId });
+  },
+  async createAuthUser({ email, password, name, phone, role }){
+    return this.callAdmin({ action:'createUser', email, password, name, phone, role });
   }
 };
 cloud.init();
@@ -2005,18 +2008,22 @@ function openUserModal(existing){
       const btn = $('#us-save'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando…';
 
       if(cloud.online && !isEdit){
-        const { data: signRes, error: signErr } = await cloud.client.auth.signUp({
-          email, password: pass,
-          options: { data: { name, phone: $('#us-phone').value.trim(), role: $('#us-role').value } }
+        // Se crea vía la Edge Function admin-user (email ya confirmado, no requiere link de correo)
+        const res = await cloud.createAuthUser({
+          email,
+          password: pass,
+          name,
+          phone: $('#us-phone').value.trim(),
+          role: $('#us-role').value
         });
-        if(signErr){
+        if(!res.ok){
           btn.disabled = false; btn.textContent = orig;
-          return toast('Error creando usuario: ' + signErr.message);
+          return toast('Error creando usuario: ' + res.error);
         }
-        const uid = signRes.user?.id;
+        const uid = res.data?.id;
         if(!uid){
           btn.disabled = false; btn.textContent = orig;
-          return toast('Necesitas confirmar el correo en Supabase.');
+          return toast('Usuario creado pero sin id devuelto — revisa Supabase');
         }
         const profile = {
           id: uid, name, email,
@@ -2024,6 +2031,7 @@ function openUserModal(existing){
           role: $('#us-role').value,
           active: $('#us-active').checked
         };
+        // Ya lo creó la Edge Function, pero re-guardamos por si cambió el active
         await cloud.upsertProfile(profile);
         state.users.push(profile);
         saveJSON(STORAGE_KEY, state);
